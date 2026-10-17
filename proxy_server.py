@@ -18,10 +18,11 @@ logging.basicConfig(
 STREAMLINK_PATH = "streamlink"
 
 # YouTube bot engellemesini aşmak için güncellenmiş argümanlar
+# Eski COMMON_HEADERS alanını bununla değiştirin:
 COMMON_HEADERS = [
-    "--http-header", "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "--http-header", "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "--http-header", "Accept-Language=tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "--youtube-backend-client=web"  # Streamlink'e YouTube web istemcisini taklit etmesini söylüyoruz
+    "--youtube-client", "web"  # Tanınmayan parametre yerine uyumlu olan güncel parametre
 ]
 
 def get_stream_info(url, retries=3):
