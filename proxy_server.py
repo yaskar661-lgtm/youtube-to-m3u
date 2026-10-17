@@ -1,8 +1,6 @@
 import subprocess
-import json
 import logging
 import os
-import time
 from flask import Flask, request, Response, jsonify
 from urllib.parse import unquote
 
@@ -17,34 +15,10 @@ logging.basicConfig(
 
 STREAMLINK_PATH = "streamlink"
 
-# Tüm sorun çıkaran özel eklenti argümanlarını kaldırıp 
-# sadece YouTube'un kabul ettiği standart tarayıcı başlıklarını gönderiyoruz
 COMMON_HEADERS = [
     "--http-header", "User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "--http-header", "Accept=text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-    "--http-header", "Accept-Language=tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
-    "--http-header", "Cache-Control=max-age=0"
+    "--http-header", "Accept-Language=tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
 ]
-
-def get_stream_info(url, retries=3):
-    for attempt in range(retries):
-        logging.info(f"Fetching stream info (attempt {attempt+1})")
-        
-        cmd = [STREAMLINK_PATH, "--json"] + COMMON_HEADERS + [url]
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-        
-        if process.returncode == 0:
-            try:
-                return json.loads(stdout.decode("utf-8", errors="replace"))
-            except Exception as parse_error:
-                logging.error(f"JSON Parse Error: {parse_error}")
-        
-        err_msg = stderr.decode("utf-8", errors="replace").strip()
-        if err_msg:
-            logging.warning(f"Streamlink Warning: {err_msg}")
-        time.sleep(1)
-    return None
 
 @app.route("/stream", methods=["GET"])
 def stream():
@@ -56,15 +30,14 @@ def stream():
     client_ip = request.remote_addr
     logging.info(f"[CLIENT CONNECT] {client_ip} → {url}")
 
-    stream_info = get_stream_info(url)
-    if not stream_info or "streams" not in stream_info:
-        return jsonify({"error": "Failed to retrieve stream info. YouTube might be blocking or channel offline."}), 500
+    # Engellenen JSON kontrolünü tamamen atlayıp doğrudan tünelleme komutunu kuruyoruz
+    command = [
+        STREAMLINK_PATH, 
+        "--hls-live-restart",
+        "--retry-streams", "3",
+        "--retry-open", "3"
+    ] + COMMON_HEADERS + [url, "best", "--stdout"]
 
-    if "best" not in stream_info["streams"]:
-        return jsonify({"error": "No valid streams found"}), 404
-
-    # Yayını baslatırken de sadece standart başlıkları kullanıyoruz
-    command = [STREAMLINK_PATH, "--hls-live-restart"] + COMMON_HEADERS + [url, "best", "--stdout"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=8192)
 
     def generate():
@@ -80,24 +53,14 @@ def stream():
         except Exception as e:
             logging.error(f"[STREAM ERROR] {e}")
         finally:
-            cleanup_process(process, client_ip)
+            if process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=3)
+                except: process.kill()
+            if process.stdout: process.stdout.close()
+            if process.stderr: process.stderr.close()
 
-    response = Response(generate(), content_type="video/mp2t")
-    @response.call_on_close
-    def cleanup():
-        cleanup_process(process, client_ip)
-    return response
-
-def cleanup_process(process, client_ip):
-    if process.poll() is None:
-        logging.info(f"[CLEANUP] Terminating process for {client_ip}")
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-    if process.stdout: process.stdout.close()
-    if process.stderr: process.stderr.close()
+    return Response(generate(), content_type="video/mp2t")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
